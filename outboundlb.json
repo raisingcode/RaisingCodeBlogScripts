@@ -1,0 +1,366 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+    
+       
+	        
+        "loadBalancerIP": {
+            "type": "string",
+            "defaultValue": "10.32.131.5"
+                         },
+        	"vmCount": {
+			"type": "int",
+			"defaultValue": 2,
+			"metadata": {"description": "Number of VM-Series firewall" 	}
+		},
+
+       
+       
+  
+        "username": {
+            "type": "string",
+            "defaultValue": "panadmin"
+            
+        },
+
+        "password": {
+            "type": "string",
+            "defaultValue": "[parameters('palocred')]"
+        },
+        
+        "palocred": {
+            "type": "string"
+            
+        },
+        "panoramaIP":{
+        "type": "string",
+        "defaultValue": "blahblahblah"
+       
+       },
+
+        "storageaccountname": {
+            
+            "type": "string",
+            "defaultValue": "[concat('sakropan', uniqueString(resourceGroup().name))]"
+        },
+ 
+        "imageVersion": {
+            "type": "string",
+            "allowedValues": [
+                "latest",
+                "8.1.0"
+            ],
+            "defaultValue": "8.1.0",
+            "metadata": {
+                "description": "PAN OS Version"
+            }
+        },
+    
+        "firewallModel": {
+            "type": "string",
+            "defaultValue": "byol",
+            "allowedValues": [
+                "byol",
+                "bundle1",
+                "bundle2"
+            ],
+            "metadata": {
+                "description": "byol = Bring Your Own License; bundle1 = Bundle 1 PAYG (Hourly); bundle2 = Bundle 2 PAYG (Hourly)"
+            }
+        },
+        "environment": {
+            "type": "string",
+            "defaultValue": "nonprod"
+        }
+        ,
+
+        "vnet_RG": {
+            "type": "string",
+            "defaultValue": "[concat('networking-', resourceGroup().location)]"
+        },
+
+        "virtualMachineName": {
+			"type": "string",
+			"metadata": {
+				"description": "Name of VM-Series VM in the Azure portal"
+			},
+			"defaultValue": "[concat('palo', '-', resourceGRoup().location, '-vm')]"
+		},
+
+        "virtualnetworkname": {
+            "type": "string",
+            "metadata": { "description": "The name of the vnet resource group"},
+            "defaultValue": "[concat('hub-', parameters('environment'), '-', resourceGroup().location,'-vnet' )]"
+        },
+
+        "vmssName" : {
+
+            "type": "string",
+            "defaultValue": "[concat('palo-vss-', resourceGroup().location)]"
+        },
+      
+
+        "outboundSubnetname": {
+        
+            "type": "string",
+           "defaultValue": "palo-untrust"
+        },
+
+        
+        "vmSize": {
+		"type": "string",
+		"allowedValues": [
+			"Standard_D3",
+			"Standard_D4",
+			"Standard_D3_v2",
+			"Standard_D4_v2",
+			"Standard_D5_v2",
+			"Standard_D14_v2",
+			"Standard_A4"
+			],
+			"metadata": {
+				"description": "Azure VM size for VM-Series"
+			},
+			"defaultValue": "Standard_D3_v2"
+		},
+     
+ 
+        "scaleInThreshold": {
+            "type": "int",
+            "defaultValue": 2000,
+            "metadata": {
+                "description": "The threshold below which the VM-Series firewall is scaled in."
+            }
+        },
+        "scaleOutThreshold": {
+            "type": "int",
+            "defaultValue": 32000,
+            "metadata": {
+                "description": "The threshold above which the VM-Series firewall is scaled out."
+            }
+        }
+    },
+
+    "variables": {
+
+        "appInsightsUrl": "[concat(variables('baseUrl'),'/deployAppInsights.json')]",
+       
+        "networkApiVersion": "2017-06-01",
+        "namingInfix": "[substring(uniqueString(resourceGroup().id), 0, 5)]",
+        "rgname" : "[resourceGroup().name]",
+        "location": "[resourceGroup().location]",
+
+        "resourceGroupName": "[resourceGroup().name]",
+       
+        "nicNameWorker": "[concat('tempworkernic', variables('namingInfix'))]",
+        "baseUrl" : "https://raw.githubusercontent.com/PaloAltoNetworks/azure-autoscaling/master/Version-1-0/hub",
+        "MgmtSubnetName" : "palo-management",
+        
+        "trustedSubnetName": "palo-trust",
+        "internalLoadBalancerName" : "[concat('lb-palo-', resourceGroup().location)]",
+
+		
+		"imagePublisher": "MicrosoftWindowsServer",
+		"imageOffer": "WindowsServer",
+        "imageSKU": "2019-Datacenter",
+
+        "publicIPPrefixName": "[concat('palo-public-ip-', resourceGroup().location)]"
+
+   
+    },
+    "resources": [
+         
+    {
+      "type": "Microsoft.Network/publicIPPrefixes",
+      "apiVersion": "2018-07-01",
+      "name": "[variables('publicIPPrefixName')]",
+      "location": "[resourceGroup().location]",
+      "sku": {
+        "name": "Standard"
+        
+      },
+      "properties": {
+        "prefixLength": 29,
+        "publicIPAddressVersion": "IPv4"
+        
+      }
+      
+    },
+     
+    {    
+        "name": "deployOutboundLoadBalancer",
+        "type": "Microsoft.Resources/deployments",
+        "apiVersion": "2015-01-01",
+        "dependsOn": [
+            
+        ],
+        "properties": {
+            "mode": "Incremental",
+            "templateLink": {
+                "uri": "[variables('deployLoadBalancerURL')]",
+                "contentVersion": "1.0.0.0"
+            },
+            "parameters": {
+                "loadBalancerSku": {
+                    "value": "[variables('hubLoadBalancerSku')]"
+                },
+                "location": {
+                    "value": "[variables('location')]"
+                },
+                "virtualNetworkRG": {
+                    "value": "[parameters('vnet_RG')]"
+                },
+                "virtualNetworkName": {
+                    "value": "[parameters('virtualNetworkName')]"
+                },
+                "subnetName": {
+                    "value": "[variables('trustedSubnetName')]"
+                },
+                "loadBalancerName": {
+                    "value": "[variables('internalLoadBalancerName')]"
+                },
+                "loadBalancerIP": {
+                    "value": "[parameters('loadBalancerIP')]"
+                },
+                "fwLbBePoolName": {
+                    "value": "BackendPool"
+                }
+            }
+        }
+    },
+   
+
+{
+        "type": "Microsoft.Compute/virtualMachineScaleSets",
+        "name": "[parameters('vmssName')]",
+        "location": "[resourceGroup().location]",
+        "dependsOn": [ 
+            "[resourceId('Microsoft.Resources/deployments', 'deployOutboundLoadBalancer' )]"
+        ],
+        "apiVersion": "2019-07-01",
+        "tags": {
+            "PanoramaManaged": "yes"
+        },
+        "sku": {
+            "name": "[parameters('vmSize')]",
+            "tier": "Standard",
+            "capacity": "[parameters('vmCount')]"
+        },
+        
+        
+        "properties": {
+            "overprovision": "false",
+            
+            "singlePlacementGroup": "false",
+            
+            "upgradePolicy": {
+                "mode": "Automatic"
+            },
+            "virtualMachineProfile": {
+                "storageProfile": {
+                    
+                    "osDisk": {
+                        "managedDisk": {
+                            "storageAccountType": "Standard_LRS"
+                        },
+                        "caching": "ReadWrite",
+                        "createOption": "FromImage",
+                        "diskSizeGB": 60
+                    },
+                    "dataDisks": [],
+                    "imageReference": {
+                        "publisher": "[variables('imagePublisher')]",
+                        "offer": "[variables('imageOffer')]",
+                        "sku": "[variables('imageSKU')]",
+                        "version": "[parameters('imageVersion')]"
+                    }
+                },
+                "osProfile": {
+                    "computerNamePrefix": "[concat('pavm', variables('namingInfix'))]",
+                    "adminUsername": "[parameters('username')]",
+                    "adminPassword": "[parameters('password')]",
+                    "customData": "[base64(variables('customDataField'))]"
+                },
+                "networkProfile": {
+                    "networkInterfaceConfigurations": [
+                    {
+                        "name": "managment-nic",
+                        "properties": {
+                            "primary": "true",
+                            "ipConfigurations": [
+                            {
+                                "name": "management-ip",
+                                "properties": {
+                                    "subnet": {
+                                        "id": "[concat('/subscriptions/', subscription().subscriptionId,'/resourceGroups/', parameters('vnet_RG'), '/providers/Microsoft.Network/virtualNetworks/', parameters('virtualNetworkName'), '/subnets/', variables('MgmtSubnetName'))]"
+                                    }
+                                }
+                            }]
+                        }
+                    },
+                    {
+                        "name": "untrust-nic",
+                        "properties": {
+                            "primary": "false",
+                            "enableIPForwarding": "true",
+                            "ipConfigurations": [
+                            {
+                                "name": "untrust-ip",
+                                "properties": {
+                                    "subnet": {
+                                        "id": "[concat('/subscriptions/', subscription().subscriptionId,'/resourceGroups/', parameters('vnet_RG'), '/providers/Microsoft.Network/virtualNetworks/', parameters('virtualNetworkName'), '/subnets/', parameters ('outboundSubnetName'))]"
+                                    },
+                                    
+                                    "publicIPAddressConfiguration": {
+                                        "name": "hub_pavm_pip",
+                                        
+                                        "properties": {
+                                            "idleTimeoutInMinutes": 15
+                                            
+                                        ,
+                                        
+                                        "publicIPPrefix": {
+                                            "id": "[resourceId('Microsoft.Network/publicIPPrefixes', variables('publicIPPrefixName'))]"
+                                        }
+                                    }
+                                    
+                                    }
+                                    
+                                }
+                            }]
+                        }
+                    },
+                    {
+                        "name": "trusted-nic",
+                        "properties": {
+                            "primary": "false",
+                            "enableIPForwarding": "true",
+                            "ipConfigurations": [
+                            {
+                                "name": "trust-ip",
+                                "properties": {
+                                    "loadBalancerBackendAddressPools": [
+                                    {
+                                        "id": "[concat('/subscriptions/', subscription().subscriptionId,'/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Network/loadBalancers/', variables('internalLoadBalancerName'), '/backendAddressPools/BackendPool')]"       
+                                        }],
+                                    "subnet": {
+                                        "id": "[concat('/subscriptions/', subscription().subscriptionId,'/resourceGroups/', parameters('vnet_RG'), '/providers/Microsoft.Network/virtualNetworks/', parameters('virtualNetworkName'), '/subnets/', variables('trustedSubnetName'))]"
+                                    }
+                                }
+                            }]
+                        }
+                    }]
+                }
+            }
+        },
+        "zones": ["1", "2", "3"]
+    }
+
+
+        
+    ]
+}
+        
+  
+   
