@@ -1,0 +1,150 @@
+{
+        "type": "Microsoft.Network/loadBalancers",
+        "apiVersion": "2018-12-01",
+        "name": "[parameters('OutboundLoadBalancerName')]",
+        "location": "[resourceGroup().location]",
+        "sku": {
+        "name": "Standard"
+        },
+        "dependsOn": [
+   
+        "[resourceId('Microsoft.Network/publicIPPrefixes',variables('publicIPPrefixName'))]"
+        ],
+        "properties": {
+        "frontendIPConfigurations": [
+            {
+            "name": "frontendlb",
+        
+            "properties": {
+                "publicIPPrefix": {
+                "id": "[resourceId('Microsoft.Network/publicIPPrefixes', variables('publicIPPrefixName') )]"
+                }
+            }
+            }
+            
+        ],
+        "backendAddressPools": [
+            {
+            "name": "lbbackendpool"
+            }
+        ],
+         "outboundRules": [
+        {
+          "name": "lboutbound",
+          
+          "properties": {
+          "frontendIPConfigurations": [
+              {"id": "[concat(resourceId('Microsoft.Network/loadBalancers', parameters('OutboundLoadBalancerName')), '/frontendIPConfigurations/frontendlb')]"}
+          ],
+          "allocatedOutboundPorts": 10000,
+          "idleTimeoutInMinutes": 15,
+          "enableTcpReset": true,
+          "protocol": "All",
+          "backendAddressPool": {
+
+          "id": "[concat(resourceId('Microsoft.Network/loadBalancers/',parameters('OutboundLoadBalancerName')),'/backendAddressPools/lbbackendpool')]"
+          }
+          }
+        }
+      ]
+    }
+   },
+  
+        
+        {
+            "type": "Microsoft.Compute/virtualMachineScaleSets",
+            "name": "[parameters('vmssName')]",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [ 
+                "[resourceId('Microsoft.Network/loadbalancers', parameters('InBoundLoadBalancerName') )]",
+                "[resourceId('Microsoft.Network/loadbalancers', parameters('OutBoundLoadBalancerName') )]"
+            ],
+            "apiVersion": "2019-07-01",
+            "tags": {
+                "PanoramaManaged": "yes"
+            },
+            "sku": {
+                "name": "[parameters('vmSize')]",
+                "tier": "Standard",
+                "capacity": "[parameters('vmCount')]"
+            },
+            "plan": {
+                 "name": "[parameters('firewallModel')]",
+                 "product": "[variables('imageOffer')]",
+                 "publisher": "[variables('imagePublisher')]"
+            },
+            
+            
+            "properties": {
+                "overprovision": "false",
+                
+                "singlePlacementGroup": "false",
+                
+                "upgradePolicy": {
+                    "mode": "Manual"
+                },
+                "virtualMachineProfile": {
+                    "storageProfile": {
+                        
+                        "osDisk": {
+                            "managedDisk": {
+                                "storageAccountType": "Standard_LRS"
+                            },
+                            "caching": "ReadWrite",
+                            "createOption": "FromImage",
+                            "diskSizeGB": 60
+                        },
+                        "dataDisks": [],
+                        "imageReference": {
+                            "publisher": "[variables('imagePublisher')]",
+                            "offer": "[variables('imageOffer')]",
+                            "sku": "[parameters('firewallModel')]",
+                            "version": "[parameters('imageVersion')]"
+                        }
+                    },
+                    "osProfile": {
+                        "computerNamePrefix": "[concat('pavm', variables('namingInfix'))]",
+                        "adminUsername": "[parameters('username')]",
+                        "adminPassword": "[parameters('password')]",
+                        "customData": "[base64(variables('customDataField'))]"
+                    },
+                    "networkProfile": {
+                        "networkInterfaceConfigurations": [
+                        {
+                            "name": "managment-nic",
+                            "properties": {
+                                "primary": "true",
+                                "ipConfigurations": [
+                                {
+                                    "name": "management-ip",
+                                    "properties": {
+                                        "subnet": {
+                                            "id": "[concat('/subscriptions/', subscription().subscriptionId,'/resourceGroups/', parameters('vnet_RG'), '/providers/Microsoft.Network/virtualNetworks/', parameters('virtualNetworkName'), '/subnets/', variables('MgmtSubnetName'))]"
+                                        }
+                                    }
+                                }]
+                            }
+                        },
+                        {
+                            "name": "untrust-nic",
+                            "properties": {
+                                "primary": "false",
+                                "enableIPForwarding": "true",
+                                "ipConfigurations": [
+                                {
+                                    "name": "untrust-ip",
+                                    "properties": {
+                                        "subnet": {
+                                            "id": "[concat('/subscriptions/', subscription().subscriptionId,'/resourceGroups/', parameters('vnet_RG'), '/providers/Microsoft.Network/virtualNetworks/', parameters('virtualNetworkName'), '/subnets/', parameters ('outboundSubnetName'))]"
+                                        },
+                                        "loadBalancerBackendAddressPools": [
+                                                {
+                                            "id": "[concat('/subscriptions/', subscription().subscriptionId,'/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Network/loadBalancers/', parameters('OutBoundLoadBalancerName'), '/backendAddressPools/lbbackendpool')]"       
+                                         }]
+                                        
+                                    }
+                                }]
+                                
+                                
+                            }
+                        },
