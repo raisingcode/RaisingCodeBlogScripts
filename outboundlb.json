@@ -5,11 +5,7 @@
     
        
 	        //dynamic
-        "loadBalancerIP": {
-            "type": "string",
-            "defaultValue": "10.32.131.5"
-            },
-        	
+      
        
        "outbound_loadbalancer_name": {
            "type": "string",
@@ -20,7 +16,7 @@
         "outbound_loadbalancer_pool_name": {
             "type": "string",
             "metadata": { "description": "Name of the outbound lb backend poolname"},
-            "defaultValue": "backendpool"
+            "defaultValue": "lbbackendpool"
         },
         "vmusername": {
             "type": "string",
@@ -33,11 +29,7 @@
            
         },    
             
-        "vnet_RG": {
-            "type": "string",
-            "defaultValue": "[concat('networking-', resourceGroup().location)]"
-        },
-
+     
         "existing_vnet": {
 
             "type": "string",
@@ -48,18 +40,36 @@
             "defaultValue": "No"
         },
 
-        "vmssName" : {
+        "vnetName": {
+            
+        "type": "string",
+        "metadata": {"descrption": "name of vnet if existing"},
+        "defaultValue": "vnet_lb_test"
 
-            "type": "string",
-            "defaultValue": "[concat('vss-', resourceGroup().location)]"
         },
-      
+        "vnetResourceGroup": {
+            "type": "string",
+            "metadata": {"description": "The resourcegroup of the vnet"},
+            "defaultValue": "[resourceGroup().name]"
+        },
 
         "outboundSubnetname": {
         
             "type": "string",
-           "defaultValue": "untrust"
+           "defaultValue": "outbound_subnet"
         },
+
+        "internalSubnetname": {
+            "type": "string", 
+            "defaultValue": "internal_subnet"
+        },
+
+        "vmssName" : {
+
+            "type": "string",
+            "defaultValue": "[concat('vss-', resourceGroup().location)]"
+        },    
+     
 
         
         "vmSize": {
@@ -85,15 +95,9 @@
     },
 
     "variables": {
-
         
         "namingInfix": "[substring(uniqueString(resourceGroup().id), 0, 5)]",
-    
-        "location": "[resourceGroup().location]",
-
-        "internalLoadBalancerName" : "[concat('lb-', resourceGroup().location)]",
-
-		
+        	
 		"imagePublisher": "MicrosoftWindowsServer",
 		"imageOffer": "WindowsServer",
         "imageSKU": "2019-Datacenter",
@@ -103,7 +107,45 @@
    
     },
     "resources": [
-         
+    
+    {
+            "type": "Microsoft.Network/virtualNetworks",
+            "apiVersion": "2019-09-01",
+            "comments": "Creates a vnet if no vm exist",
+            "condition": "[equals(parameters('existing_vnet'), 'No')]",
+            "name": "[parameters('vnetName')]",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "addressSpace": {
+                    "addressPrefixes": [
+                        "10.92.0.0/16"
+                    ]},
+                    "subnets": [
+                   
+                    {
+                        "name": "[parameters('internalSubnetname')]",
+                        "properties": {
+                            "addressPrefix": "10.92.1.0/24",
+                            "serviceEndpoints": [],
+                            "delegations": [],
+                            "privateEndpointNetworkPolicies": "Enabled",
+                            "privateLinkServiceNetworkPolicies": "Enabled"
+                        }
+                    },
+                    {
+                        "name": "[parameters('outboundSubnetname')]",
+                        "properties": {
+                            "addressPrefix": "10.92.2.0/24",
+                            "serviceEndpoints": [],
+                            "delegations": [],
+                            "privateEndpointNetworkPolicies": "Enabled",
+                            "privateLinkServiceNetworkPolicies": "Enabled"
+                        }
+                    }]
+                }
+    
+    }
+       ,  
     {
       "type": "Microsoft.Network/publicIPPrefixes",
       "apiVersion": "2018-07-01",
@@ -114,7 +156,7 @@
         
       },
       "properties": {
-        "prefixLength": 29,
+        "prefixLength": 30,
         "publicIPAddressVersion": "IPv4"
         
       }
@@ -137,8 +179,7 @@
                             "privateIPAllocationMethod": "Dynamic",
                             "publicIPPrefix": {
                                 "id": "[resourceId('Microsoft.Network/publicIPPrefixes', variables('publicIPPrefixName'))]"
-                            },
-                            "privateIPAddressVersion": "IPv4"
+                            }
                         }
             }
             ],
@@ -159,14 +200,16 @@
                             "protocol": "All",
                             "enableTcpReset": true,
                             "idleTimeoutInMinutes": 15,
-                            "backendAddressPool": {
-                                "id": "[concat(resourceId('Microsoft.Network/loadBalancers', parameters('outbound_loadbalancer_pool_name')), '/backendAddressPools/lbbackendpool')]"
-                            },
+                            
                             "frontendIPConfigurations": [
                                 {
                                     "id": "[concat(resourceId('Microsoft.Network/loadBalancers', parameters('outbound_loadbalancer_name')), '/frontendIPConfigurations/frontendlb')]"
                                 }
-                            ]
+                            ],
+                            "backendAddressPool": {
+
+          "id": "[concat(resourceId('Microsoft.Network/loadBalancers/',parameters('outbound_loadbalancer_name')),'/backendAddressPools/lbbackendpool')]"
+          }
                         }
                     }
                 ],
@@ -183,7 +226,8 @@
         "name": "[parameters('vmssName')]",
         "location": "[resourceGroup().location]",
         "dependsOn": [ 
-            "[resourceId('Microsoft.Resources/deployments', 'deployOutboundLoadBalancer' )]"
+            "[if(equals(parameters('existing_vnet'), 'Yes'), concat('/subscriptions/', subscription().subscriptionId,'/resourceGroups/', parameters('vnetResourceGroup'), '/providers/Microsoft.Network/virtualNetworks/', parameters('vnetName')), resourceId('Microsoft.Network/virtualNetworks',parameters('vnetName')))]"
+            ,"[resourceId('Microsoft.Network/loadBalancers',parameters('outbound_loadbalancer_name'))]"
         ],
         "apiVersion": "2019-07-01",
         "tags": {
@@ -213,7 +257,7 @@
                         },
                         "caching": "ReadWrite",
                         "createOption": "FromImage",
-                        "diskSizeGB": 60
+                        "diskSizeGB": 150
                     },
                     "dataDisks": [],
                     "imageReference": {
@@ -241,43 +285,30 @@
                                 "name": "untrust-ip",
                                 "properties": {
                                     "subnet": {
-                                        "id": "[concat('/subscriptions/', subscription().subscriptionId,'/resourceGroups/', parameters('vnet_RG'), '/providers/Microsoft.Network/virtualNetworks/', parameters('virtualNetworkName'), '/subnets/', parameters ('outboundSubnetName'))]"
+                                        "id": "[concat('/subscriptions/', subscription().subscriptionId,'/resourceGroups/', parameters('vnetResourceGroup'), '/providers/Microsoft.Network/virtualNetworks/', parameters('vnetName'), '/subnets/', parameters ('outboundSubnetName'))]"
                                     },
                                     
-                                    "publicIPAddressConfiguration": {
-                                        "name": "hub_pavm_pip",
-                                        
-                                        "properties": {
-                                            "idleTimeoutInMinutes": 15
-                                            
-                                        ,
-                                        
-                                        "publicIPPrefix": {
-                                            "id": "[resourceId('Microsoft.Network/publicIPPrefixes', variables('publicIPPrefixName'))]"
-                                        }
-                                    }
-                                    
-                                    }
+                                   "loadBalancerBackendAddressPools": [
+                                    {
+                                        "id": "[concat('/subscriptions/', subscription().subscriptionId,'/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Network/loadBalancers/', parameters('outbound_loadbalancer_name'), '/backendAddressPools/lbbackendpool')]"       
+                                        }]
                                     
                                 }
                             }]
                         }
                     },
                     {
-                        "name": "private-nic",
+                        "name": "internal-nic",
                         "properties": {
-                            "primary": "false",
-                            "enableIPForwarding": "true",
+                            "primary": "true",
+                           
                             "ipConfigurations": [
                             {
                                 "name": "trust-ip",
                                 "properties": {
-                                    "loadBalancerBackendAddressPools": [
-                                    {
-                                        "id": "[concat('/subscriptions/', subscription().subscriptionId,'/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Network/loadBalancers/', variables('internalLoadBalancerName'), '/backendAddressPools/BackendPool')]"       
-                                        }],
+                                 
                                     "subnet": {
-                                        "id": "[concat('/subscriptions/', subscription().subscriptionId,'/resourceGroups/', parameters('vnet_RG'), '/providers/Microsoft.Network/virtualNetworks/', parameters('virtualNetworkName'), '/subnets/', variables('trustedSubnetName'))]"
+                                        "id": "[concat('/subscriptions/', subscription().subscriptionId,'/resourceGroups/', parameters('vnetResourceGroup'), '/providers/Microsoft.Network/virtualNetworks/', parameters('vnetName'), '/subnets/', parameters('outboundSubnetname'))]"
                                     }
                                 }
                             }]
