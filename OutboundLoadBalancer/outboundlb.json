@@ -167,6 +167,9 @@
         "apiVersion": "2019-12-01",
         "name": "[parameters('outbound_loadbalancer_name')]",
         "location": "eastus2",
+        "dependsOn": [
+                "[resourceId('Microsoft.Network/publicIPPrefixes', variables('publicIPPrefixName'))]"
+        ],
         "sku": {
             "name": "Standard"
         },
