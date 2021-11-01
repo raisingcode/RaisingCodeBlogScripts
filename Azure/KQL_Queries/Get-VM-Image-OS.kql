@@ -1,0 +1,12 @@
+resources
+| where type == "microsoft.compute/virtualmachines"
+| extend  os =  properties.storageProfile.osDisk.osType
+| extend offer_sku = strcat(properties.storageProfile.imageReference.offer, '-', properties.storageProfile.imageReference.sku)
+| mv-expand  network_properties = properties.networkProfile.networkInterfaces
+| extend network_id = tostring(network_properties.id)
+| join (resources
+| where type == "microsoft.network/networkinterfaces"
+| mv-expand ipconf = properties.ipConfigurations
+| extend private_ip = ipconf.properties.privateIPAddress
+| project id, private_ip) on $left.network_id == $right.id
+| project name, os, offer_sku, private_ip
