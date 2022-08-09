@@ -1,0 +1,5 @@
+resources
+| where type == "microsoft.network/virtualnetworks"
+| mv-expand subnets = properties.subnets
+| extend subnet_prefix = subnets.properties.addressPrefix
+| project subscriptionId, name, location, subnet_prefix
